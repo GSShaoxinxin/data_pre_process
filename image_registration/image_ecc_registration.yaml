@@ -1,0 +1,4 @@
+src_path : 'E:\appData\pycharmdata\DataPreProcess\image_registration\images'
+pre : 'DJI_'
+w : 1600
+h : 1300
