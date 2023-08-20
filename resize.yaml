@@ -1,0 +1,5 @@
+#Process_dir : 'D:/Shao/Files/appdata/PycharmProject/pythonProject1/data/tree' #使用绝对路径
+Process_dir : 'G:\data\labeljieguo' #使用绝对路径
+max_dir_num : 50
+out_size_w: 1341
+out_size_h: 1263

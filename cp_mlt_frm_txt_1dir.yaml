@@ -1,0 +1,4 @@
+src_dir: 'I:\4.松材线虫\2021.4辽宁抚顺多光谱-毕拍\颜家沟红松一号样地巡航拍摄（2021.4.26）'
+dsc_dir: 'G:\data\dataset/S1_multi_masked'
+filenames_path: 'G:\data\dataset\多光谱异常部分已标签.txt' #其中只包括无人机命名的中间序号数字
+name_pre: ''#新的命名前缀
