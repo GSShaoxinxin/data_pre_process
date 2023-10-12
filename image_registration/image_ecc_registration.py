@@ -11,6 +11,7 @@ import tifffile as tiff
 from PIL import Image
 import numpy as np
 import math
+from pathlib import Path
 #文件名称中序号代表不同波段
 RGB_0=0
 BLUE_1 = 1
@@ -37,6 +38,10 @@ def cmpt_overlap_in_base(bias_x, bias_y, w, h):#计算在基准坐标下获得�
         lty = max(lty, lty1)
         rbx = min(rbx, rbx1)
         rby = min(rby, rby1)
+    ltx = math.ceil(ltx)
+    lty = math.ceil(lty)
+    rbx = math.floor(rbx)
+    rby = math.floor(rby)
     return (ltx, lty, rbx, rby)
 
 def getRects(x_array,y_array,w,h):
@@ -81,7 +86,7 @@ def copy_create_dir(src_root_path,dsc_root_path):
                 os.mkdir(path)  # 处理嵌套文件夹
 
 def read_img_for_ecc(img_file_path):
-    print("文件"+img_file_path)
+    #print("文件"+img_file_path)
     if img_file_path.endswith(".JPG"):
         tmp = cv2.imread(img_file_path)
 
@@ -139,7 +144,7 @@ def get_bias_one(img1_file_path, img2_file_path):
         # Use warpAffine for Translation, Euclidean and Affine
         im2_aligned = cv2.warpAffine(im2, warp_matrix, (sz[1], sz[0]),
                                      flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP);
-    print("hello")
+    #print("hello")
 
     im2_aligned = im2_aligned.astype(dtype = np.uint16)
     # Show final results
@@ -170,15 +175,101 @@ def get_bias_list_XY(dirpath,rgbname):
     bias_Y.append(0)
     return bias_X,bias_Y
 
+def xyxy_to_yolo(img_w, img_h, x1, y1, x2, y2):
+
+    dw = 1. / img_w
+    dh = 1. / img_h
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+    x = cx * dw
+    y = cy * dh
+    w = (x2-x1) * dw
+    h = (y2-y1) * dh
+    return ( x, y, w, h)
+
+
+def yolo_to_xyxy(img_w, img_h, cx, cy, w, h):
+    x_t = cx * img_w
+    y_t = cy * img_h
+    w_t = w * img_w
+    h_t = h * img_h
+
+    top_left_x = int(x_t - w_t / 2)
+    top_left_y = int(y_t - h_t / 2)
+    bottom_right_x = int(x_t + w_t / 2)
+    bottom_right_y = int(y_t + h_t / 2)
+    return (top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+
+def getNewRect(ltx_s, lty_s, rbx_s, rby_s,ltx_l, lty_l, rbx_l, rby_l):#s为小，l为大
+
+    cx_s = (ltx_s +rbx_s)/2.0
+    cy_s = (lty_s +rby_s)/2.0
+    # 如何判断这个标注应该舍弃还是应该保留？中心点不在新图的就舍弃
+    if cx_s < ltx_l or cx_s > rbx_l or cy_s < lty_l or cy_s > rby_l:
+        print("中心点不在新图中舍弃")
+        return None
+    #计算在新图范围内的框在原图坐标下的边界处理
+    ltx_tmp = ltx_s if ltx_s > ltx_l else ltx_l
+    lty_tmp = lty_s if lty_s > lty_l else lty_l
+    rbx_tmp = rbx_s if rbx_s < rbx_l else rbx_l
+    rby_tmp = rby_s if rby_s < rby_l else rby_l
+    if (ltx_tmp >= rbx_tmp or lty_tmp >= rby_tmp):
+        print("完全不在新图中舍弃")
+        return None
+    #计算在新图中的坐标
+    ltx_tmp = ltx_tmp- ltx_l
+    lty_tmp = lty_tmp- lty_l
+    rbx_tmp = rbx_tmp - ltx_l
+    rby_tmp = rby_tmp - lty_l
+    return (ltx_tmp,lty_tmp,rbx_tmp,rby_tmp)
+
+def cmpt_labels_line(line,w,h,ltx, lty, rbx, rby):#ltx, lty, rbx, rby
+    new_w = rbx-ltx
+    new_h = rby - lty
+    lbls=line.strip().split(' ')#去除换行符并且按空格分割
+    lbls = [float(i) for i in lbls]
+    #将标注转换为长方形格式
+    rect=yolo_to_xyxy(w,h,lbls[1],lbls[2],lbls[3],lbls[4])
+    # 在新图范围上的坐标
+    newRect = getNewRect(*rect,ltx, lty, rbx, rby)
+    if None!= newRect:
+        # 将长方形在新图上还原为标注格式
+        yolo_xywh = xyxy_to_yolo(new_w,new_h,*newRect)
+        xywh_txt = [str(i) for i in yolo_xywh]
+        return str(int(line[0]))+ " "+" ".join(xywh_txt)+"\n"
+    else:
+        return ''
+
+
+def writeNewLabels(src_root_path, dsc_root_path,dirpath,filename,ltx, lty, rbx, rby,w,h):
+    #src_txt_root_path = getTxtPathFromImg(src_root_path)
+    #dsc_txt_root_path = getTxtPathFromImg(dsc_root_path)
+
+
+    src_img_path = os.path.join(dirpath, filename)
+    src_txt_path = getTxtPathFromImg(src_img_path)
+    dsc_txt_path = src_txt_path.replace(src_root_path, dsc_root_path)
+    lines=''
+    # 读取txt
+    with open(src_txt_path, "r") as f:
+        for line in f:
+            newline=cmpt_labels_line(line,w,h,ltx, lty, rbx, rby)# 修改txt
+            lines = lines + newline
+    with open(dsc_txt_path, "w") as f:# 保存新的
+        f.write(lines)
+
 
 def ecc_registration(src_root_path,dsc_root_path):
     for dirpath, dirnames, filenames in os.walk(src_root_path, topdown=True):
         RGB_filenames = [item for item in filenames if item.endswith('.JPG')]
         for rgb_name in RGB_filenames:
-            biasx, biasy = get_bias_list_XY(dirpath,rgb_name)
+
+            biasx, biasy = get_bias_list_XY(dirpath,rgb_name) #每张图关于近红外的坐标偏移
+            #临时读取一张图片就是为了获得原始大小w,h
             img = Image.open(os.path.join(dirpath, rgb_name))  # cv2.imread(rgb_path,cv2.IMREAD_UNCHANGED)
             width = img.width
             height = img.height
+
             (ltx, lty, rbx, rby) = cmpt_overlap_in_base(biasx, biasy, width, height)
             coordination = get_coordinate_in_bias(biasx, biasy, ltx, lty, rbx, rby)  # 得到重叠部分在每个坐标中的像素值
             # 构造出对应的多光谱图像名称并读取
@@ -193,7 +284,9 @@ def ecc_registration(src_root_path,dsc_root_path):
                     a = Image.open(os.path.join(dirpath, filename))
                     b = a.crop((ltx, lty, rbx, rby))
                     # 保存图像
-                    b.save(os.path.join(dirpath.replace(src_root_path, dsc_root_path), filename))
+                    rgb_dst_path = os.path.join(dirpath.replace(src_root_path, dsc_root_path), filename)
+                    b.save(rgb_dst_path)
+                    writeNewLabels(src_root_path, dsc_root_path,dirpath,filename,ltx, lty, rbx, rby,width,height)
 
                 else:
                     filename = mltspcttxt_from_rgb(rgb_name, i)
@@ -202,12 +295,25 @@ def ecc_registration(src_root_path,dsc_root_path):
                     b = a[lty:rby, ltx:rbx]
                     tiff.imwrite(os.path.join(dirpath.replace(src_root_path, dsc_root_path), filename), b)
 
+            print("处理完文件" + rgb_name)
 
 
+def getTxtPathFromImg(img_path):#如果路径中有images换成labels，如果有.JPG 换成.txt
+    path_ls = list(Path(img_path).parts)
+    # .parts()
+    # path_ls = os.path.split(dirpath)
+    if (path_ls.count("images")):  # 存在images文件夹
+        index = path_ls.index("images")
+        path_ls[index] = 'labels'
+    if path_ls[-1].endswith(".JPG"):
+        path_ls[-1] = path_ls[-1].replace(".JPG",".txt")
+    return os.path.join(*path_ls)
 
 def main():
     src_root_path = parse_args()
+
     dsc_root_path = create_output_bro_dir(src_root_path)#创建兄弟目录作为输出目录
+
     copy_create_dir(src_root_path,dsc_root_path)
     #按名称读取文件
     ecc_registration(src_root_path,dsc_root_path)
